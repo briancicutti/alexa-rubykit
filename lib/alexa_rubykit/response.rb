@@ -15,13 +15,21 @@ module AlexaRubykit
       @session_attributes[key.to_sym] = value
     end
 
-    def add_speech(speech_text)
-      @speech = { :type => 'PlainText', :text => speech_text }
+    def add_speech(speech_text, format='PlainText')
+      if format == 'PlainText'
+        @speech = { :type => 'PlainText', :text => speech_text }
+      else
+        @speech = { :type => 'SSML', :ssml => speech_text }
+      end
       @speech
     end
 
-    def add_reprompt(speech_text)
-      @reprompt = { "outputSpeech" => { :type => 'PlainText', :text => speech_text } }
+    def add_reprompt(speech_text, format='PlainText')
+      if format == 'PlainText'
+        @reprompt = { "outputSpeech" => { :type => 'PlainText', :text => speech_text } }
+      else
+        @reprompt = { "outputSpeech" => { :type => 'SSML', :ssml => speech_text } }
+      end
       @reprompt
     end
 
