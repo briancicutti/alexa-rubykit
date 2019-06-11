@@ -1,13 +1,21 @@
 module AlexaRubykit
   class Response
+    class SlotNotFound < StandardError; end
+
     require 'json'
-    attr_accessor :version, :session, :response_object, :session_attributes, :speech, :reprompt, :response, :card
+    require 'alexa_rubykit/response/dialog'
+
+    attr_accessor :version, :session, :response_object, :session_attributes,
+                  :speech, :reprompt, :response, :card, :intents, :request
 
     # Every response needs a shouldendsession and a version attribute
     # We initialize version to 1.0, use add_version to set your own.
-    def initialize(version = '1.0')
+    def initialize(request=nil, version='1.0')
       @session_attributes = Hash.new
       @version = version
+      @request = request
+      @intents = request.intent if request && request.type == "INTENT_REQUEST"
+      @directives = []
     end
 
     # Adds a key,value pair to the session object.
@@ -15,13 +23,58 @@ module AlexaRubykit
       @session_attributes[key.to_sym] = value
     end
 
-    def add_speech(speech_text)
-      @speech = { :type => 'PlainText', :text => speech_text }
+    def add_speech(speech_text, ssml = false)
+      if ssml
+        @speech = { :type => 'SSML', :ssml => check_ssml(speech_text) }
+      else
+        @speech = { :type => 'PlainText', :text => speech_text }
+      end
       @speech
     end
+    
+    def add_audio_url(url, token='', offset=0)
+      @directives << {
+        'type' => 'AudioPlayer.Play',
+        'playBehavior' => 'REPLACE_ALL',
+        'audioItem' => {
+          'stream' => {
+            'token' => token,
+            'url' => url,
+            'offsetInMilliseconds' => offset
+          }
+        }
+      }
+    end
 
-    def add_reprompt(speech_text)
-      @reprompt = { "outputSpeech" => { :type => 'PlainText', :text => speech_text } }
+    def delegate_dialog_response
+      @directives = [Dialog.delegate_directive(intents)]
+    end
+
+    def elicit_dialog_response(slot)
+      @directives = [Dialog.elicit_slot_directive(slot, intents)]
+    end
+
+    def confirm_dialog_slot(slot)
+      @directives = [Dialog.confirm_slot_directive(slot, intents)]
+    end
+
+    def confirm_dialog_intent
+      @directives = [Dialog.confirm_intent_directive(intents)]
+    end
+
+    def modify_slot(name, value, confirmation_status)
+      raise SlotNotFound if @intents['slots'][name].nil?
+
+      @intents['slots'][name]['value'] = value
+      @intents['slots'][name]['confirmationStatus'] = confirmation_status
+    end
+
+    def add_reprompt(speech_text, ssml = false)
+      if ssml
+        @reprompt = { "outputSpeech" => { :type => 'SSML', :ssml => check_ssml(speech_text) } }
+      else
+        @reprompt = { "outputSpeech" => { :type => 'PlainText', :text => speech_text } }
+      end
       @reprompt
     end
 
@@ -48,18 +101,17 @@ module AlexaRubykit
     end
 
     # Adds a speech to the object, also returns a outputspeech object.
-    def say_response(speech, end_session = true)
-      output_speech = add_speech(speech)
+    def say_response(speech, end_session = true, ssml = false)
+      output_speech = add_speech(speech,ssml)
       { :outputSpeech => output_speech, :shouldEndSession => end_session }
     end
 
     # Incorporates reprompt in the SDK 2015-05
-    def say_response_with_reprompt(speech, reprompt_speech, end_session = true)
-      output_speech = add_speech(speech)
-      reprompt_speech = add_reprompt(reprompt_speech)
+    def say_response_with_reprompt(speech, reprompt_speech, end_session = true, speech_ssml = false, reprompt_ssml = false)
+      output_speech = add_speech(speech,speech_ssml)
+      reprompt_speech = add_reprompt(reprompt_speech,reprompt_ssml)
       { :outputSpeech => output_speech, :reprompt => reprompt_speech, :shouldEndSession => end_session }
     end
-
 
     # Creates a session object. We pretty much only use this in testing.
     def build_session
@@ -75,6 +127,7 @@ module AlexaRubykit
     def build_response_object(session_end = true)
       @response = Hash.new
       @response[:outputSpeech] = @speech unless @speech.nil?
+      @response[:directives] = @directives unless @directives.empty?
       @response[:card] = @card unless @card.nil?
       @response[:reprompt] = @reprompt unless session_end && @reprompt.nil?
       @response[:shouldEndSession] = session_end
@@ -96,5 +149,12 @@ module AlexaRubykit
     def to_s
       "Version => #{@version}, SessionObj => #{@session}, Response => #{@response}"
     end
+
+    private
+
+      def check_ssml(ssml_string)
+        ssml_string = ssml_string.strip[0..6] == "<speak>" ? ssml_string : "<speak>" + ssml_string
+        ssml_string.strip[-8..1] == "</speak>" ? ssml_string : ssml_string + "</speak>"
+      end
   end
 end
